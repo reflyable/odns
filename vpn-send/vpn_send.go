@@ -53,7 +53,7 @@ func (vs *vpn_send) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 func (vs *vpn_send) getReply(r *dns.Msg) *dns.Msg {
 	log.Debugf("%p %p\n", &vs.pubCache, &vs)
 	originName := r.Question[0].Name
-	ipkey := uint32(math_rand.Int())
+	ipkey := math_rand.Uint32()
 	log.Debugf("\nSENDER IP MASK is %d : %b\n", ipkey, ipkey)
 	log.Debug("SENDER encrypt query: ", originName)
 	index := math_rand.Intn(len(vs.pubCache))
