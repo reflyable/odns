@@ -3,6 +3,7 @@ package vpn_recv
 import (
 	"encoding/pem"
 	"os"
+	"path/filepath"
 
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -80,6 +81,10 @@ func setup(c *caddy.Controller) error {
 		return c.ArgErr() // Otherwise it's an error.
 	}
 	domain := c.Val()
+	config := dnsserver.GetConfig(c)
+	if !filepath.IsAbs(privateKey) && config.Root != "" {
+		privateKey = filepath.Join(config.Root, privateKey)
+	}
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return vpn_recv{Next: next, privateKey: ReadPrivatePem(privateKey), domain: domain}
 	})
