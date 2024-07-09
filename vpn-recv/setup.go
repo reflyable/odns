@@ -13,6 +13,7 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -81,12 +82,22 @@ func setup(c *caddy.Controller) error {
 		return c.ArgErr() // Otherwise it's an error.
 	}
 	domain := c.Val()
+	if !c.NextArg() { // Expect at least one value.
+		println("here2")
+		return c.ArgErr() // Otherwise it's an error.
+	}
+	redisString := c.Val()
 	config := dnsserver.GetConfig(c)
 	if !filepath.IsAbs(privateKey) && config.Root != "" {
 		privateKey = filepath.Join(config.Root, privateKey)
 	}
+	opt, err := redis.ParseURL(redisString)
+	if err != nil {
+		println("here3 ", err)
+		return c.ArgErr()
+	}
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
-		return vpn_recv{Next: next, privateKey: ReadPrivatePem(privateKey), domain: domain}
+		return vpn_recv{Next: next, privateKey: ReadPrivatePem(privateKey), domain: domain, rdb: redis.NewClient(opt), local: config.ListenHosts[0]}
 	})
 
 	return nil

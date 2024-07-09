@@ -9,31 +9,37 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"net"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/coredns/coredns/plugin"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 	"github.com/coredns/coredns/request"
 	"github.com/miekg/dns"
+	"github.com/redis/go-redis/v9"
+	"golang.org/x/net/publicsuffix"
 )
 
 const name = "vpn-recv"
 
+var ctx1 = context.Background()
 var log = clog.NewWithPlugin("vpn_recv")
 
 type ResponseReverter struct {
 	dns.ResponseWriter
-
+	start            time.Time
 	originalQuestion dns.Question
 	mask             uint32
 }
 
 // NewResponseReverter returns a pointer to a new ResponseReverter.
-func NewResponseReverter(w dns.ResponseWriter, r *dns.Msg, ipkey uint32) *ResponseReverter {
+func NewResponseReverter(w dns.ResponseWriter, r *dns.Msg, ipkey uint32, start time.Time) *ResponseReverter {
 	return &ResponseReverter{
-
+		start:            start,
 		ResponseWriter:   w,
 		originalQuestion: r.Question[0],
 		mask:             ipkey,
@@ -69,6 +75,7 @@ func (r *ResponseReverter) WriteMsg(res1 *dns.Msg) error {
 
 	state := request.Request{W: r.ResponseWriter, Req: res}
 	state.SizeAndDo(res)
+	RequestDuration.Observe(time.Since(r.start).Seconds())
 	return r.ResponseWriter.WriteMsg(res)
 }
 
@@ -83,7 +90,9 @@ func (r *ResponseReverter) Write(buf []byte) (int, error) {
 type vpn_recv struct {
 	Next       plugin.Handler
 	privateKey *ecdsa.PrivateKey
+	rdb        *redis.Client
 	domain     string
+	local      string
 }
 
 // ServeDNS implements the plugin.Handler interface.
@@ -131,6 +140,7 @@ func (vr vpn_recv) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Ms
 		return dns.RcodeSuccess, nil
 	}
 	prefix = strings.ToUpper(prefix[1:])
+	start := time.Now()
 
 	log.Debug("RECV DNS Recv: ", r.Question[0].Name)
 
@@ -147,12 +157,45 @@ func (vr vpn_recv) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Ms
 		log.Error(err)
 		return dns.RcodeServerFailure, err
 	}
+
 	ipkey := binary.BigEndian.Uint32(originDomain[len(originDomain)-4:])
-	wr := NewResponseReverter(w, r, ipkey)
+	wr := NewResponseReverter(w, r, ipkey, start)
+	if !utf8.Valid(originDomain[:len(originDomain)-4]) {
+		log.Info("Invalid key!")
+		return dns.RcodeRefused, nil
+	}
 	r.Question[0].Name = dns.Fqdn(string(originDomain[:len(originDomain)-4]))
-	log.Info("Decryption: ", wr.originalQuestion.Name, "->", r.Question[0].Name)
 
 	state := request.Request{W: w, Req: r}
+	log.Info("Src ", state.IP(), " Decryption ", wr.originalQuestion.Name, " To ", r.Question[0].Name)
+	RequestCount.Inc()
+	go func() {
+		type request struct {
+			Time int64
+			Src  string
+			Dst  string
+			Name string
+		}
+		b, err := json.Marshal(request{Time: start.UnixMicro(), Src: state.IP(), Dst: vr.local, Name: r.Question[0].Name})
+		if err != nil {
+			log.Error("JSON Marshal Error ", err)
+			return
+		}
+		log.Debug("Json: ", b)
+		vr.rdb.ZAdd(ctx1, "requests", redis.Z{
+			Score:  float64(start.UnixMicro()),
+			Member: b,
+		})
+		vr.rdb.ZIncrBy(ctx1, "fqdns", 1, r.Question[0].Name)
+		mid, _ := strings.CutSuffix(r.Question[0].Name, ".")
+		etld, err := publicsuffix.EffectiveTLDPlusOne(mid)
+		if err != nil {
+			log.Error("etld Error ", err)
+			return
+		}
+		vr.rdb.ZIncrBy(ctx1, "slds", 1, etld)
+	}()
+
 	r.RecursionDesired = true
 	rcode, err := plugin.NextOrFailure(vr.Name(), vr.Next, ctx, wr, r)
 
