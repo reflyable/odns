@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"fmt"
 
 	"golang.org/x/crypto/hkdf"
@@ -28,11 +27,7 @@ func encryptSymmetric(in, key, iv []byte) ([]byte, error) {
 }
 
 // Encrypt is a function for encryption
-func Encrypt(public *ecdsa.PublicKey, in, s1, s2 []byte) ([]byte, error) {
-	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
+func Encrypt(public *ecdsa.PublicKey, private *ecdsa.PrivateKey, in, s1, s2 []byte) ([]byte, error) {
 	prv, err := private.ECDH()
 	if err != nil {
 		return nil, err
