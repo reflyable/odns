@@ -103,8 +103,9 @@ func setup(c *caddy.Controller) error {
 	// 	return c.ArgErr() // Otherwise it's an error.
 	// }
 	cu := new(dns.Client)
+	cu.Timeout = 10 * time.Second
 	ct := new(dns.Client)
-
+	ct.Timeout = 10 * time.Second
 	nscache := make(map[string]net.IP)
 	ct.Net = "tcp"
 	vs := &vpn_send{Next: nil, domain: domain, pubCache: nil, forwarder: forwarder, c: cu, ct: ct, nsCache: nscache}
