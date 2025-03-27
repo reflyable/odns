@@ -169,7 +169,7 @@ func (vs *vpn_send) getReply(r *dns.Msg, index int) (*dns.Msg, int) {
 	log.Debug(domain, " ", pub, " ", index, " ", originName)
 	buf = binary.BigEndian.AppendUint32(buf, ipkey)
 	buf = binary.BigEndian.AppendUint32(buf, crc32.ChecksumIEEE(buf))
-	printBytes(buf)
+	// printBytes(buf)
 	buf, err = Encrypt(pub, prv, buf, nil, nil)
 	if err != nil {
 		log.Error("encrypt ", err)
