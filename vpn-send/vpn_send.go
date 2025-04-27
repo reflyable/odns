@@ -12,7 +12,8 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
-	"fmt"
+
+	// "fmt"
 	"hash/crc32"
 	math_rand "math/rand"
 	"net"
@@ -114,7 +115,7 @@ func (vs *vpn_send) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 	log.Debug(len(vs.pubCache))
 	w.WriteMsg(in)
 
-	return dns.RcodeSuccess, nil
+	return in.Rcode, nil
 }
 
 func (vs *vpn_send) getprv(index int) *ecdsa.PrivateKey {
@@ -130,25 +131,25 @@ func (vs *vpn_send) getprv(index int) *ecdsa.PrivateKey {
 	return vs.prvCache[index].prv
 }
 
-func printBytes(data []byte) {
-	// 打印十六进制表示
-	fmt.Println("Hexadecimal representation:")
-	for _, b := range data {
-		fmt.Printf("0x%02X ", b)
-	}
-	fmt.Println()
+// func printBytes(data []byte) {
+// 	// 打印十六进制表示
+// 	fmt.Println("Hexadecimal representation:")
+// 	for _, b := range data {
+// 		fmt.Printf("0x%02X ", b)
+// 	}
+// 	fmt.Println()
 
-	// 打印ASCII可显示字符或十六进制
-	fmt.Println("ASCII or Hexadecimal representation:")
-	for _, b := range data {
-		if b >= 32 && b <= 126 {
-			fmt.Printf("%c ", b) // 打印可显示的ASCII字符
-		} else {
-			fmt.Printf("0x%02X ", b) // 打印不可显示字符的十六进制
-		}
-	}
-	fmt.Println()
-}
+// 	// 打印ASCII可显示字符或十六进制
+// 	fmt.Println("ASCII or Hexadecimal representation:")
+// 	for _, b := range data {
+// 		if b >= 32 && b <= 126 {
+// 			fmt.Printf("%c ", b) // 打印可显示的ASCII字符
+// 		} else {
+// 			fmt.Printf("0x%02X ", b) // 打印不可显示字符的十六进制
+// 		}
+// 	}
+// 	fmt.Println()
+// }
 
 func (vs *vpn_send) getReply(r *dns.Msg, index int) (*dns.Msg, int) {
 	log.Debugf("%p %p\n", &vs.pubCache, &vs)
@@ -160,8 +161,8 @@ func (vs *vpn_send) getReply(r *dns.Msg, index int) (*dns.Msg, int) {
 		return nil, 0
 	}
 
-	// ipkey := math_rand.Uint32()
-	ipkey := uint32(303174162)
+	ipkey := math_rand.Uint32()
+	// ipkey := uint32(303174162)
 	log.Debugf("\nSENDER IP MASK is %d : %b\n", ipkey, ipkey)
 	log.Debug("SENDER encrypt query: ", originName)
 
@@ -169,7 +170,6 @@ func (vs *vpn_send) getReply(r *dns.Msg, index int) (*dns.Msg, int) {
 	log.Debug(domain, " ", pub, " ", index, " ", originName)
 	buf = binary.BigEndian.AppendUint32(buf, ipkey)
 	buf = binary.BigEndian.AppendUint32(buf, crc32.ChecksumIEEE(buf))
-	// printBytes(buf)
 	buf, err = Encrypt(pub, prv, buf, nil, nil)
 	if err != nil {
 		log.Error("encrypt ", err)
@@ -206,15 +206,28 @@ func (vs *vpn_send) getReply(r *dns.Msg, index int) (*dns.Msg, int) {
 				rr.Header().Name = originName
 			}
 			ip := make(net.IP, net.IPv4len)
-			binary.BigEndian.PutUint32(ip, binary.BigEndian.Uint32(rr.(*dns.A).A.To4())^ipkey)
 			if ip.Equal(net.IP{255, 255, 255, 255}) {
 				return nil, 1
 			}
+			binary.BigEndian.PutUint32(ip, binary.BigEndian.Uint32(rr.(*dns.A).A.To4())^ipkey)
 			rr.(*dns.A).A = ip
 		}
 	}
+
 	// r.Question[0].Name = originName
-	in = in.SetReply(r)
+	in.Id = r.Id
+	if in.Opcode == dns.OpcodeQuery {
+		in.RecursionDesired = r.RecursionDesired // Copy rd bit
+		in.CheckingDisabled = r.CheckingDisabled // Copy cd bit
+	}
+
+	if len(in.Question) > 0 {
+		in.Question = []dns.Question{r.Question[0]}
+	}
+	if r.RecursionDesired {
+		in.RecursionAvailable = true
+	}
+	log.Debug(in.String())
 	return in, 0
 }
 
